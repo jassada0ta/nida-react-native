@@ -3,11 +3,15 @@ import { createStore } from 'redux';
 import uuid from 'uuid/v4';
 import { Provider, connect } from 'react-redux';
 import ShopScreen from './components/ShopScreen';
-import CartScreen from './'
+import CartScreen from './components/CartScreen';
+import OrderHistoryScreen from './components/OrderHistoryScreen';
+import globalStyles from './global-styles';
+import moment from 'moment';
 import {
-  StyleSheet,
   View
 } from 'react-native';
+
+import services from './shop-service';
 
 const actionTypes = {
   AddProductToCart: "AddProductToCart",
@@ -54,7 +58,53 @@ const shopInitState = {
 
 };
 
+class ShopActionCreator {
+  checkout() {
+    return {
+      type: actionTypes.Checkout,
+    };
+  }
+
+  backToShop() {
+    return {
+      type: actionTypes.BackToShop,
+    };
+  }
+
+  addProductToCart(product) {
+    return {
+      type: actionTypes.AddProductToCart,
+      product,
+    };
+  }
+
+  itemQtyChange(productId, newQty) {
+    return {
+      type: actionTypes.ChangeQtyInCart,
+      qty: newQty,
+      productId,
+    };
+  }
+
+  removeItemFromCart(productId) {
+    return {
+      type: actionTypes.RemoveProductFromCart,
+      productId,
+    };
+  }
+
+  commitOrder() {
+    return {
+      type: actionTypes.CommitOrder,
+    };
+  }
+}
+
 class ShopReducer {
+
+  constructor(services) {
+    this.services = services;
+  }
 
   _cloneState(state) {
     return {
@@ -62,14 +112,10 @@ class ShopReducer {
       products: [...state.products],
       cart: state.cart.map(x => ({ ...x })),
       purchaseOrders: state.purchaseOrders.map(x => ({
-        id: x.id,
+        ...x,
         lineItems: x.lineItems.map(x => ({ ...x })),
       })),
     };
-  }
-
-  _findProductById(state, productId) {
-    return state.products.filter(x => x.id === productId).pop();
   }
 
   _getCartItemByProductId(state, productId) {
@@ -78,11 +124,12 @@ class ShopReducer {
 
   addProductToCart(state, action) {
     let newState = this._cloneState(state);
-    let cartItem = this._getCartItemByProductId(state, action.productId);
+    let cartItem = this._getCartItemByProductId(newState, action.product.id);
+
     if (!cartItem) {
       cartItem = {
         id: uuid(),
-        productId: action.productId,
+        productId: action.product.id,
         qty: 1,
       };
       newState.cart.push(cartItem);
@@ -95,14 +142,15 @@ class ShopReducer {
 
   removeProductFromCart(state, action) {
     let newState = this._cloneState(state);
-    let cartItem = this._getCartItemByProductId(state, action.productId);
+    let cartItem = this._getCartItemByProductId(newState, action.productId);
     newState.cart = newState.cart.filter(x => x.id !== cartItem.id);
     return newState;
   }
 
   changeQtyInCart(state, action) {
     let newState = this._cloneState(state);
-    let cartItem = this._getCartItemByProductId(state, action.productId);
+    let cartItem = this._getCartItemByProductId(newState, action.productId);
+    debugger;
     if (action.qty >= 0) {
       cartItem.qty = action.qty;
     }
@@ -127,7 +175,7 @@ class ShopReducer {
       orderDate: moment().format("DD/MMM/YYYY HH:mm:ss"),
       lineItems: state.cart.map(x => ({
         ...x,
-        price: this._findProductById(state, x.productId).price
+        price: this.services.getProductById(state.products, x.productId).price
       })),
     });
     newState.cart = [];
@@ -143,28 +191,79 @@ class ShopReducer {
   reduce(state = shopInitState, action) {
     switch (action.type) {
       case actionTypes.AddProductToCart:
-        return addProductToCart(state, action);
+        return this.addProductToCart(state, action);
       case actionTypes.RemoveProductFromCart:
-        return removeProductFromCart(state, action);
+        return this.removeProductFromCart(state, action);
       case actionTypes.ChangeQtyInCart:
-        return changeQtyInCart(state, action);
+        return this.changeQtyInCart(state, action);
       case actionTypes.Checkout:
-        return checkout(state, action);
+        return this.checkout(state, action);
       case actionTypes.CommitOrder:
-        return commitOrder(state, action);
+        return this.commitOrder(state, action);
       case actionTypes.BackToShop:
-        return backToShop(state, action);
+        return this.backToShop(state, action);
       default: return state;
     }
   }
 }
 
 const reducer = (state, action) => {
-  let obj = new ShopReducer();
+  let obj = new ShopReducer(services);
   return obj.reduce(state, action);
 }
 
+const actionCreator = new ShopActionCreator();
 const store = createStore(reducer);
+
+
+const ConnectedShopScreen = connect((state) => {
+  return {
+    products: state.products,
+  };
+}, (dispatch) => {
+  return {
+    onCheckout: () => {
+      dispatch(actionCreator.checkout());
+    },
+    onAddProductToCart: (product) => {
+      dispatch(actionCreator.addProductToCart(product));
+    },
+  }
+})(ShopScreen);
+
+const ConnectedCartScreen = connect((state) => {
+  return {
+    cart: state.cart,
+    products: state.products,
+  }
+}, (dispatch) => {
+  return {
+    onRemoveItemFromCart: (productId) => {
+      dispatch(actionCreator.removeItemFromCart(productId));
+    },
+    onItemQtyChange: (productId, newQty) => {
+      dispatch(actionCreator.itemQtyChange(productId, newQty));
+    },
+    onCommitOrder: () => {
+      dispatch(actionCreator.commitOrder());
+    },
+    onBack: () => {
+      dispatch(actionCreator.backToShop());
+    },
+  };
+})(CartScreen);
+
+const ConnectedOrderHistoryScreen = connect((state) => {
+  return {
+    orders: state.purchaseOrders,
+  };
+}, (dispatch) => {
+  return {
+    onBack: () => {
+      dispatch(actionCreator.backToShop());
+    },
+  }
+})(OrderHistoryScreen);
 
 class RootAppBase extends Component {
   constructor(props) {
@@ -173,17 +272,17 @@ class RootAppBase extends Component {
   render() {
     let { currentScreen } = this.props;
     if (currentScreen === screens.Shop) {
-      return (<ShopScreen />);
+      return (<ConnectedShopScreen />);
     }
     else if (currentScreen === screens.Cart) {
-      return (<CartScreen />);
+      return (<ConnectedCartScreen />);
     }
     else if (currentScreen === screens.OrderHistory) {
-      return (<OrderHistoryScreen />);
+      return (<ConnectedOrderHistoryScreen />);
     }
     else {
       return (
-        <View>
+        <View style={globalStyles.container}>
           <Text>You should not see this.</Text>
         </View>);
     }
@@ -206,21 +305,3 @@ export default class App extends Component {
   }
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#F5FCFF',
-  },
-  welcome: {
-    fontSize: 20,
-    textAlign: 'center',
-    margin: 10,
-  },
-  instructions: {
-    textAlign: 'center',
-    color: '#333333',
-    marginBottom: 5,
-  },
-});
